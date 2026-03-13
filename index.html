@@ -64,6 +64,11 @@
       background: #5a67d8;
     }
 
+    .input-row button:disabled {
+      background: #a0aec0;
+      cursor: not-allowed;
+    }
+
     .stats {
       font-size: 0.85rem;
       color: #718096;
@@ -135,6 +140,13 @@
       padding: 40px 0;
       font-size: 0.95rem;
     }
+
+    .error-msg {
+      text-align: center;
+      color: #fc8181;
+      padding: 8px;
+      font-size: 0.85rem;
+    }
   </style>
 </head>
 <body>
@@ -143,20 +155,32 @@
 
     <div class="input-row">
       <input type="text" id="itemInput" placeholder="아이템 추가..." />
-      <button onclick="addItem()">추가</button>
+      <button id="addBtn" onclick="addItem()">추가</button>
     </div>
 
     <div class="stats" id="stats"></div>
+    <div class="error-msg" id="errorMsg"></div>
 
     <ul id="list"></ul>
     <p class="empty" id="empty">아직 항목이 없습니다.</p>
   </div>
 
-  <script>
-    let items = JSON.parse(localStorage.getItem('shopping') || '[]');
+  <script type="module">
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
-    function save() {
-      localStorage.setItem('shopping', JSON.stringify(items));
+    const SUPABASE_URL = 'https://sigigyejcsqptvzvckil.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNpZ2lneWVqY3NxcHR2enZja2lsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzNjMwNTYsImV4cCI6MjA4ODkzOTA1Nn0.4sh04MSnmjMfGCF3L4zEj4WhhCjN7Vr5OjVC6be-4Ko';
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let items = [];
+
+    function showError(msg) {
+      document.getElementById('errorMsg').textContent = msg;
+    }
+
+    function clearError() {
+      document.getElementById('errorMsg').textContent = '';
     }
 
     function render() {
@@ -176,14 +200,14 @@
       const checked = items.filter(i => i.done).length;
       stats.textContent = `${checked} / ${items.length} 완료`;
 
-      items.forEach((item, idx) => {
+      items.forEach(item => {
         const li = document.createElement('li');
         if (item.done) li.classList.add('checked');
 
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.checked = item.done;
-        cb.onchange = () => toggle(idx);
+        cb.onchange = () => toggle(item.id, !item.done);
 
         const span = document.createElement('span');
         span.textContent = item.text;
@@ -192,7 +216,7 @@
         del.className = 'delete';
         del.textContent = '✕';
         del.title = '삭제';
-        del.onclick = () => remove(idx);
+        del.onclick = () => remove(item.id);
 
         li.appendChild(cb);
         li.appendChild(span);
@@ -201,34 +225,92 @@
       });
     }
 
-    function addItem() {
+    async function loadItems() {
+      clearError();
+      const { data, error } = await supabase
+        .from('shopping_items')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        showError('데이터를 불러오지 못했습니다: ' + error.message);
+        return;
+      }
+
+      items = data;
+      render();
+    }
+
+    async function addItem() {
       const input = document.getElementById('itemInput');
       const text = input.value.trim();
       if (!text) return;
-      items.push({ text, done: false });
-      save();
+
+      const btn = document.getElementById('addBtn');
+      btn.disabled = true;
+      clearError();
+
+      const { data, error } = await supabase
+        .from('shopping_items')
+        .insert([{ text, done: false }])
+        .select()
+        .single();
+
+      btn.disabled = false;
+
+      if (error) {
+        showError('추가 실패: ' + error.message);
+        return;
+      }
+
+      items.push(data);
       render();
       input.value = '';
       input.focus();
     }
 
-    function toggle(idx) {
-      items[idx].done = !items[idx].done;
-      save();
+    async function toggle(id, done) {
+      clearError();
+      const { error } = await supabase
+        .from('shopping_items')
+        .update({ done })
+        .eq('id', id);
+
+      if (error) {
+        showError('업데이트 실패: ' + error.message);
+        await loadItems();
+        return;
+      }
+
+      const item = items.find(i => i.id === id);
+      if (item) item.done = done;
       render();
     }
 
-    function remove(idx) {
-      items.splice(idx, 1);
-      save();
+    async function remove(id) {
+      clearError();
+      const { error } = await supabase
+        .from('shopping_items')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        showError('삭제 실패: ' + error.message);
+        return;
+      }
+
+      items = items.filter(i => i.id !== id);
       render();
     }
+
+    // 전역 함수 등록 (onclick 속성용)
+    window.addItem = addItem;
 
     document.getElementById('itemInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') addItem();
     });
 
-    render();
+    loadItems();
   </script>
 </body>
 </html>
